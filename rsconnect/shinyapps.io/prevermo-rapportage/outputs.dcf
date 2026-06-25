@@ -1,0 +1,10 @@
+name: outputs
+title:
+username: prevermo-rapportage
+account: prevermo-rapportage
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 17550766
+bundleId: 12177306
+url: https://prevermo-rapportage.shinyapps.io/outputs/
+version: 1

@@ -1,29 +1,60 @@
-# CSV Data Extractor
+# Rapportage Splitsing Overzicht
 
-This R Shiny app lets a user upload multiple CSV files and creates frequency tables from the extracted data in each CSV. Each file's results start hidden behind a `Show rows` toggle. A `Percentage` dropdown scales the displayed frequencies.
+Deze R Shiny-app laat een gebruiker een of meerdere CSV-bestanden uploaden en maakt daaruit een gecombineerd overzicht met frequentietabellen. Als er meerdere CSV-bestanden worden geselecteerd, worden overeenkomende frequenties bij elkaar opgeteld zodat er een overzicht ontstaat.
 
-For each CSV, the app:
+De app leest CSV-bestanden altijd in met puntkomma als scheidingsteken.
 
-1. Finds a cell containing `Date of Birth`, ignoring letter case.
-2. Uses the cell immediately to its right as the top-left corner of the extraction area.
-3. Finds a cell containing `Tags`, ignoring letter case.
-4. Scans right from `Tags` until it finds a non-empty cell.
-5. Uses the cell one row down and one column left of that non-empty cell as the top-right corner.
-6. Extracts rows downward until the first completely blank row in the selected columns.
-7. Uses the first extracted row as column names.
-8. Creates one frequency table per extracted column and displays them 3 per row.
-9. Multiplies each frequency by the selected percentage and divides by 100.
-10. Colors adjusted frequency cells red for values 10 or below, yellow for values below 20 and above 10, and green otherwise.
+## Werking
 
-## Run
+Voor ieder geupload CSV-bestand voert de app de volgende stappen uit:
 
-From this folder:
+1. De celwaarden worden opgeschoond door aanhalingstekens en `=`-tekens te verwijderen.
+2. De app zoekt naar een cel met `Date of Birth`, ongeacht hoofdletters of kleine letters.
+3. De cel direct rechts van `Date of Birth` wordt gebruikt als linkerbovenhoek van het gebied dat moet worden uitgelezen.
+4. De app zoekt naar een cel met `Tags`, ongeacht hoofdletters of kleine letters.
+5. Vanaf `Tags` wordt naar rechts gezocht totdat een niet-lege cel wordt gevonden.
+6. De cel een rij lager en een kolom links van die niet-lege cel wordt gebruikt als rechterbovenhoek van het uit te lezen gebied.
+7. De app leest vervolgens rijen naar beneden uit totdat in de geselecteerde kolommen een volledig lege rij wordt gevonden.
+8. De eerste uitgelezen rij wordt gebruikt als kolomnamen.
+9. Voor iedere uitgelezen kolom wordt een frequentietabel gemaakt.
+10. Als meerdere CSV-bestanden zijn geupload, worden frequentietabellen met dezelfde titel gecombineerd.
+11. Binnen gecombineerde tabellen worden waarden met dezelfde `Splitsing naam` bij elkaar opgeteld.
+12. De kolom `Potentiële deelname` toont de opgetelde oorspronkelijke frequentie.
+13. De kolom `Verwachte deelname` wordt berekend met `ceiling(Potentiële deelname * percentage / 100)`.
+14. Het percentage is een numeriek invoerveld met een minimum van `0`, maximum van `100` en standaardwaarde `50`.
+15. De kolom `Potentiële deelname` krijgt kleurcodering:
+    - `0-14`: rood
+    - `15-35`: geel
+    - `>35`: groen
+16. De frequentietabellen worden weergegeven in een responsieve layout met drie tabellen per rij.
+
+## Uitgevoerde wijzigingen
+
+- Een R Shiny-app aangemaakt in `app.R`.
+- Uploadfunctionaliteit toegevoegd voor meerdere CSV-bestanden.
+- De app ingesteld om CSV-bestanden standaard en uitsluitend met puntkomma te lezen.
+- Een Nederlandse uitlegtekst toegevoegd onder het uploadveld.
+- De titel van de app gewijzigd naar `Rapportage splitsing overzicht`.
+- Opschoning toegevoegd voor quotes en `=`-tekens in geuploade CSV-data.
+- Extractielogica toegevoegd op basis van de cellen `Date of Birth` en `Tags`.
+- Weergave van ruwe CSV-tabellen vervangen door frequentietabellen.
+- Frequentietabellen gecombineerd wanneer meerdere CSV-bestanden worden geupload.
+- De oude `Show rows`-toggle verwijderd.
+- De kolommen hernoemd naar `Splitsing naam`, `Potentiële deelname` en `Verwachte deelname`.
+- Een percentage-invoer toegevoegd waarmee de verwachte deelname wordt berekend.
+- De berekening van `Verwachte deelname` aangepast zodat waarden naar boven worden afgerond.
+- Kleurcodering toegevoegd voor `Potentiële deelname`.
+- De frequentietabellen in een layout van drie per rij geplaatst.
+
+## Starten
+
+Voer vanuit deze map uit:
 
 ```r
 shiny::runApp("app.R")
 ```
 
-If `shiny` is not installed:
+Als `shiny` nog niet is geinstalleerd:
 
 ```r
 install.packages("shiny")

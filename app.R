@@ -8,6 +8,13 @@ is_empty_cell <- function(value) {
   normalize_cell(value) == ""
 }
 
+clean_csv_cells <- function(grid) {
+  cleaned <- gsub("[\"'=]", "", grid)
+  dim(cleaned) <- dim(grid)
+  dimnames(cleaned) <- dimnames(grid)
+  cleaned
+}
+
 read_csv_grid <- function(path, separator) {
   data <- read.table(
     path,
@@ -22,7 +29,7 @@ read_csv_grid <- function(path, separator) {
     na.strings = character()
   )
 
-  as.matrix(data)
+  clean_csv_cells(as.matrix(data))
 }
 
 find_cell <- function(grid, target) {
@@ -130,11 +137,17 @@ build_frequency_tables <- function(extracted, output_id_prefix) {
     counts <- sort(table(values), decreasing = TRUE)
 
     frequency_data <- if (length(counts) == 0) {
-      data.frame(Value = "(no data)", Frequency = 0, check.names = FALSE)
+      data.frame(
+        "Splitsing naam" = "(no data)",
+        "Potentiële deelname" = 0,
+        "Verwachte deelname" = 0,
+        check.names = FALSE
+      )
     } else {
       data.frame(
-        Value = names(counts),
-        Frequency = as.integer(counts),
+        "Splitsing naam" = names(counts),
+        "Potentiële deelname" = as.integer(counts),
+        "Verwachte deelname" = as.integer(counts),
         check.names = FALSE
       )
     }
@@ -147,12 +160,63 @@ build_frequency_tables <- function(extracted, output_id_prefix) {
   })
 }
 
-frequency_color <- function(value) {
-  if (value <= 10) {
+combine_frequency_tables <- function(frequency_table_groups, output_id_prefix) {
+  split_column <- "Splitsing naam"
+  original_column <- "Potentiële deelname"
+  expected_column <- "Verwachte deelname"
+
+  combined_by_title <- list()
+  title_order <- character()
+
+  for (frequency_tables in frequency_table_groups) {
+    for (frequency_table in frequency_tables) {
+      title <- frequency_table$title
+      data <- frequency_table$data
+
+      if (!all(c(split_column, original_column) %in% names(data))) {
+        next
+      }
+
+      data <- data[, c(split_column, original_column), drop = FALSE]
+      data[[original_column]] <- as.numeric(data[[original_column]])
+
+      if (!title %in% names(combined_by_title)) {
+        combined_by_title[[title]] <- data
+        title_order <- c(title_order, title)
+      } else {
+        combined_by_title[[title]] <- rbind(combined_by_title[[title]], data)
+      }
+    }
+  }
+
+  lapply(seq_along(title_order), function(index) {
+    title <- title_order[index]
+    data <- combined_by_title[[title]]
+
+    summed <- aggregate(
+      data[[original_column]],
+      by = list(data[[split_column]]),
+      FUN = sum,
+      na.rm = TRUE
+    )
+    names(summed) <- c(split_column, original_column)
+    summed <- summed[order(-summed[[original_column]], summed[[split_column]]), , drop = FALSE]
+    summed[[expected_column]] <- summed[[original_column]]
+
+    list(
+      id = paste0(output_id_prefix, "_frequency_", index),
+      title = title,
+      data = summed[, c(split_column, original_column, expected_column), drop = FALSE]
+    )
+  })
+}
+
+original_frequency_color <- function(value) {
+  if (value <= 14) {
     return("#f8d7da")
   }
 
-  if (value < 20) {
+  if (value <= 35) {
     return("#fff3cd")
   }
 
@@ -186,13 +250,16 @@ data_frame_table <- function(data) {
 }
 
 frequency_table_html <- function(data, percentage) {
-  if (!"Frequency" %in% names(data)) {
+  original_column <- "Potentiële deelname"
+  expected_column <- "Verwachte deelname"
+
+  if (!all(c(original_column, expected_column) %in% names(data))) {
     return(data_frame_table(data))
   }
 
-  adjusted <- data$Frequency * percentage / 100
+  adjusted <- ceiling(data[[original_column]] * percentage / 100)
   display_data <- data
-  display_data$Frequency <- vapply(adjusted, format_frequency, character(1))
+  display_data[[expected_column]] <- vapply(adjusted, format_frequency, character(1))
 
   tags$table(
     class = "table table-striped table-bordered table-hover",
@@ -203,9 +270,13 @@ frequency_table_html <- function(data, percentage) {
       lapply(seq_len(nrow(display_data)), function(row_index) {
         tags$tr(
           lapply(seq_along(display_data), function(column_index) {
-            if (names(display_data)[column_index] == "Frequency") {
+            if (names(display_data)[column_index] == original_column) {
               tags$td(
-                style = paste0("background-color: ", frequency_color(adjusted[row_index]), ";"),
+                style = paste0(
+                  "background-color: ",
+                  original_frequency_color(display_data[[original_column]][row_index]),
+                  ";"
+                ),
                 display_data[[column_index]][row_index]
               )
             } else {
@@ -252,7 +323,7 @@ ui <- fluidPage(
       }
     "))
   ),
-  titlePanel("CSV Data Extractor"),
+  titlePanel("Rapportage splitsing overzicht"),
   sidebarLayout(
     sidebarPanel(
       fileInput(
@@ -261,17 +332,16 @@ ui <- fluidPage(
         multiple = TRUE,
         accept = c(".csv", "text/csv", "text/comma-separated-values,text/plain")
       ),
-      radioButtons(
-        "separator",
-        "Separator",
-        choices = c(Comma = ",", Semicolon = ";", Tab = "\t"),
-        selected = ","
+      helpText(
+        "Upload hier je data export(s), als je meerdere bestanden selecteert dan worden de frequenties bij elkaar opgeteld om tot één overzicht te komen."
       ),
-      selectInput(
+      numericInput(
         "percentage",
         "Percentage",
-        choices = setNames(seq(10, 100, 10), paste0(seq(10, 100, 10), "%")),
-        selected = 100
+        value = 50,
+        min = 0,
+        max = 100,
+        step = 1
       )
     ),
     mainPanel(
@@ -281,102 +351,87 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
-  uploaded_data <- reactive({
+  combined_results <- reactive({
     req(input$csv_files)
 
     files <- input$csv_files
-    table_ids <- paste0("csv_table_", seq_len(nrow(files)))
-    toggle_ids <- paste0("show_rows_", seq_len(nrow(files)))
+    messages <- character()
 
-    lapply(seq_len(nrow(files)), function(index) {
+    frequency_table_groups <- lapply(seq_len(nrow(files)), function(index) {
       warning_message <- NULL
 
       data <- tryCatch(
         withCallingHandlers(
-          extract_target_data(read_csv_grid(files$datapath[index], input$separator)),
+          extract_target_data(read_csv_grid(files$datapath[index], ";")),
           warning = function(warning) {
             warning_message <<- conditionMessage(warning)
             invokeRestart("muffleWarning")
           }
         ),
         error = function(error) {
-          data.frame(
-            Error = conditionMessage(error),
-            check.names = FALSE
-          )
+          messages <<- c(messages, paste(files$name[index], conditionMessage(error), sep = ": "))
+          NULL
         }
       )
-      frequency_tables <- if (ncol(data) == 1 && identical(names(data), "Error")) {
+
+      if (!is.null(warning_message)) {
+        messages <<- c(messages, paste(files$name[index], warning_message, sep = ": "))
+      }
+
+      if (is.null(data)) {
         list()
       } else {
         tryCatch(
-          build_frequency_tables(data, table_ids[index]),
+          build_frequency_tables(data, paste0("csv_table_", index)),
           error = function(error) {
-            list(list(
-              id = paste0(table_ids[index], "_frequency_error"),
-              title = "Error",
-              data = data.frame(Error = conditionMessage(error), check.names = FALSE)
-            ))
+            messages <<- c(messages, paste(files$name[index], conditionMessage(error), sep = ": "))
+            list()
           }
         )
       }
-
-      list(
-        id = table_ids[index],
-        toggle_id = toggle_ids[index],
-        name = files$name[index],
-        data = data,
-        frequency_tables = frequency_tables,
-        warning = warning_message
-      )
     })
+
+    list(
+      frequency_tables = combine_frequency_tables(frequency_table_groups, "combined"),
+      messages = messages
+    )
   })
 
   output$csv_tables <- renderUI({
-    tables <- uploaded_data()
+    results <- combined_results()
 
-    tagList(lapply(tables, function(table_info) {
-      tagList(
-        h3(table_info$name),
-        if (!is.null(table_info$warning)) {
-          tags$p(table_info$warning, style = "color: #8a5a00;")
-        },
-        checkboxInput(table_info$toggle_id, "Show rows", FALSE),
-        conditionalPanel(
-          condition = sprintf("input['%s']", table_info$toggle_id),
-          if (length(table_info$frequency_tables) == 0) {
-            tableOutput(table_info$id)
-          } else {
+    tagList(
+      if (length(results$messages) > 0) {
+        tags$div(
+          lapply(results$messages, function(message) {
+            tags$p(message, style = "color: #8a5a00;")
+          })
+        )
+      },
+      if (length(results$frequency_tables) == 0) {
+        tags$p("No frequency tables to display.")
+      } else {
+        tags$div(
+          class = "frequency-grid",
+          lapply(results$frequency_tables, function(frequency_table) {
             tags$div(
-              class = "frequency-grid",
-              lapply(table_info$frequency_tables, function(frequency_table) {
-                tags$div(
-                  class = "frequency-table",
-                  h4(frequency_table$title),
-                  uiOutput(frequency_table$id)
-                )
-              })
+              class = "frequency-table",
+              h4(frequency_table$title),
+              uiOutput(frequency_table$id)
             )
-          }
-        ),
-        tags$hr()
-      )
-    }))
+          })
+        )
+      }
+    )
   })
 
   observe({
-    tables <- uploaded_data()
+    results <- combined_results()
 
-    lapply(tables, function(table_info) {
-      output[[table_info$id]] <- renderTable({
-        table_info$data
-      }, striped = TRUE, bordered = TRUE, hover = TRUE, width = "100%")
-
-      lapply(table_info$frequency_tables, function(frequency_table) {
-        output[[frequency_table$id]] <- renderUI({
-          req(input$percentage)
-          frequency_table_html(frequency_table$data, as.numeric(input$percentage))
-        })
+    lapply(results$frequency_tables, function(frequency_table) {
+      output[[frequency_table$id]] <- renderUI({
+        req(input$percentage)
+        frequency_table_html(frequency_table$data, as.numeric(input$percentage))
       })
     })
   })
